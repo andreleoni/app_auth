@@ -1,43 +1,25 @@
 module AppAuth::Helper
-  def code
-    @request.params['code']
-  end
-
-  def access_token
-    @request.cookies['access_token']
-  end
-
-  def refresh_token
-    @request.cookies['refresh_token']
-  end
-
-  def id_token
-    @request.cookies['id_token']
-  end
-
-  def signed_in?
-    code.present? ||
-    access_token.present? ||
-    refresh_token.present?
+  def could_redirect?
+    code.blank? && refresh_token.blank?
   end
 
   def redirect(location)
-    [301, { 'Location' => location, 'Content-Type' => 'text/html' }]
+    [302, { 'Location' => location, 'Content-Type' => 'text/html' }, ['Move to auth page']]
   end
 
   def login_url
-    "#{AppAuth.config.base_uri}/login?response_type=code&client_id=#{AppAuth.config.client_id}&redirect_uri=#{AppAuth.config.redirect_uri}&state=#{@request.url}"
+    "#{AppAuth.config.federate_base_uri}/login?response_type=code&client_id=#{AppAuth.config.client_id}&redirect_uri=#{redirect_uri}&state=#{@request.url}"
   end
 
   def authorize_url
-    "#{AppAuth.config.base_uri}/oauth2/token"
+    "#{AppAuth.config.federate_base_uri}/oauth2/token"
   end
 
   def authorize_body
     {
       grant_type: 'authorization_code',
       client_id: AppAuth.config.client_id,
-      redirect_uri: AppAuth.config.redirect_uri,
+      redirect_uri: redirect_uri,
       code: code
     }
   end
@@ -48,5 +30,23 @@ module AppAuth::Helper
       client_id: AppAuth.config.client_id,
       refresh_token: refresh_token
     }
+  end
+
+  def redirect_uri
+    "#{actual_uri}#{AppAuth.config.app_redirect_path}"
+  end
+
+  def actual_uri
+    return development_uri if Rails.env.development?
+    @request.url.match(url_regex)[0]
+  end
+
+  def development_uri
+    protocol, url = @request.url.match(url_regex)[0].split('//')
+    "https://#{url}"
+  end
+
+  def url_regex
+    'https?:\/\/[\S][\w.]+(:\d+)?'
   end
 end

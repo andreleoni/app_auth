@@ -1,8 +1,12 @@
 require 'rest-client'
 require 'app_auth/helper'
+require 'app_auth/secure'
+require 'app_auth/cookies'
 
 class AppAuth::Middleware
   include AppAuth::Helper
+  include AppAuth::Secure
+  include AppAuth::Cookies
 
   def initialize(app)
     @app = app
@@ -10,15 +14,13 @@ class AppAuth::Middleware
 
   def call(env)
     @request = Rack::Request.new(env)
-    return redirect(login_url) unless signed_in?
+    return redirect(login_url) if could_redirect?
 
     @status, @headers, @body = @app.call(env)
     @response = Rack::Response.new(@body, @status, @headers)
 
-    set_access_token_cookie
-    set_id_token_cookie
-    set_refresh_token_cookie
-
+    set_auth_cookies
+    set_attributes_cookies
     set_user_attributes
 
     @response.finish
@@ -31,38 +33,12 @@ class AppAuth::Middleware
     AppAuth::User.current(id_token || authorize_user['id_token'])
   end
 
-  def set_refresh_token_cookie
-    return if refresh_token.present?
-
-    @response.set_cookie('refresh_token', { value: authorize_user['refresh_token'], expires: 15.days.from_now })
-
-    # @response.set_cookie('refresh_token', { value: authorize_user['refresh_token'], expires: 15.days.from_now, domain: 'sidekiq.enjoei.com.br' })
-  end
-
-  def set_access_token_cookie
-    return if access_token.present?
-
-    @response.set_cookie('access_token', { value: authorize_user['access_token'], expires: 20.seconds.from_now })
-
-    # @response.set_cookie('access_token', { value: authorize_user['access_token'], expires: 20.seconds.from_now, domain: 'sidekiq.enjoei.com.br' })
-  end
-
-  def set_id_token_cookie
-    return if id_token.present?
-
-    @response.set_cookie('id_token', { value: authorize_user['id_token'], expires: 20.seconds.from_now })
-
-    # @response.set_cookie('id_token', { value: authorize_user['id_token'], expires: 20.seconds.from_now, domain: 'sidekiq.enjoei.com.br' })
-  end
-
   def authorize_user
     @authorize_user ||=
-      if refresh_token.blank?
-        JSON.parse(RestClient.post(authorize_url, authorize_body))
-      elsif refresh_token.present?
+      if refresh_token.present?
         JSON.parse(RestClient.post(authorize_url, refresh_token_body))
       else
-        {}
+        JSON.parse(RestClient.post(authorize_url, authorize_body))
       end
   rescue
     {}
